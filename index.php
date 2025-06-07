@@ -28,6 +28,7 @@ try {
     $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $username, $password);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
+    http_response_code(404);
     echo json_encode(['error' => 'Database connection failed: ' . $e->getMessage()]);
     exit;
 }
@@ -55,6 +56,7 @@ switch ($action) {
         filterEvents($pdo);
         break;
     default:
+        http_response_code(400);
         echo json_encode(['error' => 'Invalid action']);
         break;
 }
@@ -84,6 +86,7 @@ function registerUser($pdo) {
     $email = $data['email'] ?? null;
 
     if (!$username || !$password) {
+        http_response_code(400);
         echo json_encode(['error' => 'Username and password are required']);
         return;
     }
@@ -93,8 +96,10 @@ function registerUser($pdo) {
     $stmt = $pdo->prepare("INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)");
     try {
         $stmt->execute([$username, $password_hash, $email]);
+        http_response_code(200);
         echo json_encode(['success' => 'User registered successfully']);
     } catch (Exception $e) {
+        http_response_code(400);
         echo json_encode(['error' => 'Failed to register user: ' . $e->getMessage()]);
     }
 }
@@ -105,6 +110,7 @@ function loginUser($pdo) {
     $password = $data['password'] ?? '';
 
     if (!$username || !$password) {
+        http_response_code(400);
         echo json_encode(['error' => 'Username and password are required']);
         return;
     }
@@ -114,6 +120,7 @@ function loginUser($pdo) {
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$user || !password_verify($password, $user['password_hash'])) {
+        http_response_code(400);
         echo json_encode(['error' => 'Invalid username or password']);
         return;
     }
@@ -123,13 +130,14 @@ function loginUser($pdo) {
 
     $stmt = $pdo->prepare("INSERT INTO tokens (user_id, token, expires_at) VALUES (?, ?, ?)");
     $stmt->execute([$user['id'], $token, $expires_at]);
-
+    http_response_code(200);
     echo json_encode(['token' => $token, 'expires_at' => $expires_at]);
 }
 
 function addEvent($pdo) {
     $user_id = getUserIdFromToken($pdo);
     if (!$user_id) {
+        http_response_code(401);
         echo json_encode(['error' => 'Unauthorized']);
         return;
     }
@@ -141,6 +149,7 @@ function addEvent($pdo) {
     $event_date = $data['event_date'] ?? null;
 
     if (!$category_id || !$title || !$event_date) {
+        http_response_code(400);
         echo json_encode(['error' => 'Missing required fields']);
         return;
     }
@@ -148,8 +157,10 @@ function addEvent($pdo) {
     $stmt = $pdo->prepare("INSERT INTO events (user_id, category_id, title, description, event_date) VALUES (?, ?, ?, ?, ?)");
     try {
         $stmt->execute([$user_id, $category_id, $title, $description, $event_date]);
+        http_response_code(200);
         echo json_encode(['success' => 'Event added successfully']);
     } catch (Exception $e) {
+        http_response_code(400);
         echo json_encode(['error' => 'Failed to add event: ' . $e->getMessage()]);
     }
 }
@@ -157,6 +168,7 @@ function addEvent($pdo) {
 function getEvents($pdo) {
     $user_id = getUserIdFromToken($pdo);
     if (!$user_id) {
+        http_response_code(401);
         echo json_encode(['error' => 'Unauthorized']);
         return;
     }
@@ -167,13 +179,14 @@ function getEvents($pdo) {
                            WHERE e.user_id = ?");
     $stmt->execute([$user_id]);
     $events = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
+    http_response_code(200);
     echo json_encode(['events' => $events]);
 }
 
 function deleteEvent($pdo) {
     $user_id = getUserIdFromToken($pdo);
     if (!$user_id) {
+        http_response_code(401);
         echo json_encode(['error' => 'Unauthorized']);
         return;
     }
@@ -181,6 +194,7 @@ function deleteEvent($pdo) {
     $event_id = $_GET['event_id'] ?? null;
 
     if (!$event_id) {
+        http_response_code(400);
         echo json_encode(['error' => 'Event ID is required']);
         return;
     }
@@ -188,8 +202,10 @@ function deleteEvent($pdo) {
     $stmt = $pdo->prepare("DELETE FROM events WHERE id = ? AND user_id = ?");
     try {
         $stmt->execute([$event_id, $user_id]);
+        http_response_code(200);
         echo json_encode(['success' => 'Event deleted successfully']);
     } catch (Exception $e) {
+        http_response_code(400);
         echo json_encode(['error' => 'Failed to delete event: ' . $e->getMessage()]);
     }
 }
@@ -197,6 +213,7 @@ function deleteEvent($pdo) {
 function filterEvents($pdo) {
     $user_id = getUserIdFromToken($pdo);
     if (!$user_id) {
+        http_response_code(401);
         echo json_encode(['error' => 'Unauthorized']);
         return;
     }
@@ -216,6 +233,6 @@ function filterEvents($pdo) {
     $stmt = $pdo->prepare($query);
     $stmt->execute($params);
     $events = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
+    http_response_code(200);
     echo json_encode(['events' => $events]);
 }
