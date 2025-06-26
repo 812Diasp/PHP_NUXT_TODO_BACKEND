@@ -6,11 +6,11 @@ header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-W
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if (preg_match('#^http://localhost(:\d+)?$#', $origin)) {
+if (preg_match('#^https?://localhost(:\d+)?$#', $origin) ||
+    preg_match('#^https?://127\.0\.0\.1(:\d+)?$#', $origin)) {
     header("Access-Control-Allow-Origin: $origin");
-    header("Access-Control-Allow-Credentials: true");  // Разрешить использование cookies и авторизацию
+    header("Access-Control-Allow-Credentials: true");
 }
-
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -55,12 +55,31 @@ switch ($action) {
     case 'filter_events':
         filterEvents($pdo);
         break;
+    case 'edit_events':
+        editEvent($pdo);
+    case 'logout':
+        logoutUser($pdo);
+        break;
     default:
         http_response_code(400);
         echo json_encode(['error' => 'Invalid action']);
         break;
 }
 
+function logoutUser($pdo) {
+    $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    if(!preg_match('/Bearer\s(\S+)/', $authHeader,$matches)){
+        http_response_code(401);
+        echo json_encode(['error'=> 'Unauthorised']);
+    }
+    $token = $matches[1];
+
+    $stmt = $pdo->prepare('DELETE FROM tokens where token = ?');
+    $stmt->execute([$token]);
+
+    http_response_code(200);
+    echo json_encode(['success'=> 'Logget out succesccfully']);
+}
 // === УТИЛИТЫ ===
 
 function getUserIdFromToken($pdo): ?int {
@@ -70,11 +89,37 @@ function getUserIdFromToken($pdo): ?int {
     }
     $token = $matches[1];
 
-    $stmt = $pdo->prepare("SELECT user_id FROM tokens WHERE token = ? AND expires_at > NOW()");
+    // Получаем данные токена
+    $stmt = $pdo->prepare("SELECT user_id, expires_at FROM tokens WHERE token = ?");
     $stmt->execute([$token]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    return $row['user_id'] ?? null;
+    if (!$row) {
+        return null;
+    }
+
+    $expiresAt = new DateTime($row['expires_at']);
+    $now = new DateTime();
+
+    // Определяем, пора ли обновлять токен (например, если до истечения < 24 часа)
+    $interval = $now->diff($expiresAt);
+    $remainingMinutes = ($interval->days * 24 * 60) + ($interval->h * 60) + $interval->i;
+
+    if ($remainingMinutes < 60) { // меньше часа до истечения
+        // Генерируем новый токен
+        $newToken = bin2hex(random_bytes(32));
+        $newExpiresAt = date('Y-m-d H:i:s', strtotime('+4 days'));
+
+        // Обновляем запись в БД
+        $pdo->prepare("UPDATE tokens SET token = ?, expires_at = ? WHERE token = ?")
+           ->execute([$newToken, $newExpiresAt, $token]);
+
+        // Добавляем новый токен в заголовок или тело ответа
+        header("X-New-Token: $newToken");
+        header("X-Token-Expires-In: " . $newExpiresAt);
+    }
+
+    return $row['user_id'];
 }
 
 // === ЭНДПОИНТЫ ===
@@ -235,4 +280,46 @@ function filterEvents($pdo) {
     $events = $stmt->fetchAll(PDO::FETCH_ASSOC);
     http_response_code(200);
     echo json_encode(['events' => $events]);
+}
+//дорелизовать в фронте
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+function editEvent($pdo) {
+    $user_id = getUserIdFromToken($pdo);
+    if (!$user_id) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized']);
+        return;
+    }
+
+    $event_id = $_GET['event_id'] ?? null;
+    $data = json_decode(file_get_contents('php://input'), true);
+
+    if (!$event_id || !$data['title'] || !$data['category_id'] || !$data['event_date']) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Missing required fields']);
+        return;
+    }
+
+    $stmt = $pdo->prepare("UPDATE events SET
+        title = ?,
+        description = ?,
+        category_id = ?,
+        event_date = ?
+        WHERE id = ? AND user_id = ?");
+
+    try {
+        $stmt->execute([
+            $data['title'],
+            $data['description'] ?? null,
+            $data['category_id'],
+            $data['event_date'],
+            $event_id,
+            $user_id
+        ]);
+        http_response_code(200);
+        echo json_encode(['success' => 'Event updated successfully']);
+    } catch (Exception $e) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Failed to update event: ' . $e->getMessage()]);
+    }
 }
